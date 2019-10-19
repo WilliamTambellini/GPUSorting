@@ -37,6 +37,7 @@ using namespace std;
 CAssignmentBase::CAssignmentBase()
 	: m_CLPlatform(nullptr), m_CLDevice(nullptr), m_CLContext(nullptr), m_CLCommandQueue(nullptr)
 {
+    std::cout << "New AssignmentBase" << std::endl;
 }
 
 CAssignmentBase::~CAssignmentBase()

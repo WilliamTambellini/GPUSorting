@@ -1,24 +1,24 @@
-cmake_minimum_required (VERSION 2.8.3)
+cmake_minimum_required (VERSION 2.9.3)
 project (GPUComputing)
 
 # Add our modules to the path
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/../cmake/")
 
-
 include(CheckCXXCompilerFlag)
-if (WIN32)
-else (WIN32)
-    #set (EXTRA_COMPILE_FLAGS "-Wall -Werror")
-    set (EXTRA_COMPILE_FLAGS "-Wall")
-    CHECK_CXX_COMPILER_FLAG(-std=c++11 HAS_CXX_11)
-    if (HAS_CXX_11)
-        set(EXTRA_COMPILE_FLAGS "${EXTRA_COMPILE_FLAGS} -std=c++11")
-        message(STATUS "Enabling C++11 support")
-    else(HAS_CXX_11)
-        message(WARNING "No C++11 support detected, build will fail.")
-    endif()
-    set (CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} ${EXTRA_COMPILE_FLAGS}")
-endif (WIN32)
+
+#set (EXTRA_COMPILE_FLAGS "-Wall -Werror")
+set (EXTRA_COMPILE_FLAGS "-Wall")
+CHECK_CXX_COMPILER_FLAG(-std=c++11 HAS_CXX_11)
+CHECK_CXX_COMPILER_FLAG(-std=c++14 HAS_CXX_14)
+if (HAS_CXX_14)
+    set(EXTRA_COMPILE_FLAGS "${EXTRA_COMPILE_FLAGS} -std=c++14")
+    message(STATUS "Enabling C++14 support")
+else()
+    message(FATAL "No C++14 support detected.")
+endif()
+
+message(STATUS ${EXTRA_COMPILE_FLAGS})
+set (CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} ${EXTRA_COMPILE_FLAGS}")
 
 # Include support for changing the working directory in Visual Studio
 include(ChangeWorkingDirectory)
@@ -39,12 +39,8 @@ ADD_EXECUTABLE (Sorting
 	${Sources}
 	${Headers}
 	${CLSources}
-	)
+)
 
 # Link required libraries
-target_link_libraries(Sorting ${OPENCL_LIBRARIES})
+target_link_libraries(Sorting m stdc++ ${OPENCL_LIBRARIES})
 target_link_libraries(Sorting GPUCommon)
-
-if (WIN32)
-	change_workingdir(Sorting ${CMAKE_SOURCE_DIR})
-endif()

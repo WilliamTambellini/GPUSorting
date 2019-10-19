@@ -11,14 +11,10 @@ using namespace std;
 
 int main(int argc, char** argv)
 {
+    std::cout << "main:" << std::endl;
 	CSortingMain mySortingMain;
 
 	auto success = mySortingMain.EnterMainLoop(argc, argv);
 
-#ifdef _MSC_VER
-	cout << "Press any key..." << endl;
-	cin.get();
-#endif
-
-	return success ? 0 : 1;
+    return success ? EXIT_SUCCESS : EXIT_FAILURE;
 }

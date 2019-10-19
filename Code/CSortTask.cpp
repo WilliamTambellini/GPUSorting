@@ -7,9 +7,13 @@ GPU Computing / GPGPU Praktikum source code.
 
 #include "../Common/CLUtil.h"
 #include "../Common/CTimer.h"
+
 #include <time.h>
 #include <math.h>
+#include <stdlib.h>
+#include <algorithm>
 #include <sstream>
+#include <climits>
 #include <cstring>
 
 using namespace std;
@@ -327,9 +331,9 @@ void CSortTask::Sort_SimpleSortingNetwork(cl_context Context, cl_command_queue C
 	size_t localWorkSize[1];
 
 	// "padded" n, so we get an even amount of values
-	unsigned int n = (m_N & 1) ? (m_N + 1) : (m_N);
+    size_t n = (m_N & 1) ? (m_N + 1) : (m_N);
 
-	localWorkSize[0] = min(LocalWorkSize[0], n);
+    localWorkSize[0] = std::min(LocalWorkSize[0], n);
 	globalWorkSize[0] = CLUtil::GetGlobalWorkSize(n >> 1, localWorkSize[0]);
 
 	// set general arguments
@@ -357,9 +361,9 @@ void CSortTask::Sort_SimpleSortingNetworkLocal(cl_context Context, cl_command_qu
 	size_t globalWorkSize[1];
 	size_t localWorkSize[1];
 	// "padded" n, so we get an even amount of values
-	unsigned int n = (m_N & 1) ? (m_N + 1) : (m_N);
+    size_t n = (m_N & 1) ? (m_N + 1) : (m_N);
 
-	localWorkSize[0] = min(LocalWorkSize[0], n);
+    localWorkSize[0] = std::min(LocalWorkSize[0], n);
 	globalWorkSize[0] = CLUtil::GetGlobalWorkSize(n >> 1, localWorkSize[0]);
 	unsigned int loop_lim = (n / localWorkSize[0]);
 	unsigned int offset = 0;
