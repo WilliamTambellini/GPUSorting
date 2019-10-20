@@ -19,7 +19,10 @@
 #ifndef _CSORT_TASK_H
 #define _CSORT_TASK_H
 
+#include <iostream>
+#include <algorithm>
 #include "../Common/IComputeTask.h"
+
 
 class CSortTask : public IComputeTask
 {
@@ -40,11 +43,20 @@ public:
 
 	virtual bool ValidateResults();
 
+    void coutCPU(const unsigned int* p, const unsigned n) const {
+        for(unsigned i = 0; i < n; ++i)
+            std::cout << p[i] << " ";
+        std::cout << std::endl;
+    }
+
 protected:
 
 	size_t getPaddedSize(size_t n);
 
-	void Mergesort();
+    void StdSort();
+    void StdStableSort();
+    void MergeSort();
+    void TimSort();
 	void ValidateCPU();
 
 	void Sort_Mergesort(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3]);
@@ -78,9 +90,9 @@ protected:
 	cl_kernel			m_MergesortGlobalBigKernel;
 	cl_kernel			m_SimpleSortingNetworkKernel;
 	cl_kernel			m_SimpleSortingNetworkLocalKernel;
-	cl_kernel			m_BitonicStartKernel;
 	cl_kernel			m_BitonicGlobalKernel;
 	cl_kernel			m_BitonicLocalKernel;
+    cl_kernel			m_BitonicStartKernel;
 };
 
 #endif // _CSORT_TASK_H

@@ -98,12 +98,12 @@ void CLUtil::PrintBuildLog(cl_program Program, cl_device_id Device)
 	string buildLog(logSize, ' ');
 
 	clGetProgramBuildInfo(Program, Device, CL_PROGRAM_BUILD_LOG, logSize, &buildLog[0], NULL);
-	buildLog[logSize] = '\0';
+    buildLog[logSize-1] = '\0';
 
 	if(buildStatus != CL_SUCCESS)
 		cout<<"There were build errors!"<<endl;
-	cout<<"Build log:"<<endl;
-	cout<<buildLog<<endl;
+    cout << "Build log: " << endl;
+    cout << buildLog << endl << endl;
 }
 
 double CLUtil::ProfileKernel(cl_command_queue CommandQueue, cl_kernel Kernel, cl_uint Dimensions, 

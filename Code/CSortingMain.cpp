@@ -11,9 +11,6 @@ GPU Computing / GPGPU Praktikum source code.
 
 using namespace std;
 
-///////////////////////////////////////////////////////////////////////////////
-// CAssignment2
-
 bool CSortingMain::DoCompute()
 {
 	// Task 1: parallel reduction
@@ -27,14 +24,12 @@ bool CSortingMain::DoCompute()
 		// info output
 		cout << "Start sorting array of size " << arraySize;
 		cout << " using LocalWorkSize " << LocalWorkSize[0] << endl << endl;
-
 		// create sorting task and start it
 		CSortTask sorting(arraySize, LocalWorkSize);
 		RunComputeTask(sorting, LocalWorkSize);
+
+
 	}
 
 	return true;
 }
-
-///////////////////////////////////////////////////////////////////////////////
-// NOTE: With bigger arrays we need to compile for 64-Bit!

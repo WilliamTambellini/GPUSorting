@@ -70,9 +70,10 @@ bool CAssignmentBase::InitCLContext()
 	const cl_uint c_MaxPlatforms = 16;
 	platformIds.resize(c_MaxPlatforms);
 	
-	cl_uint countPlatforms;
+    cl_uint countPlatforms = 0;
 	V_RETURN_FALSE_CL(clGetPlatformIDs(c_MaxPlatforms, &platformIds[0], &countPlatforms), "Failed to get CL platform ID");
 	platformIds.resize(countPlatforms);
+    std::cout << "InitCLContext: " << countPlatforms << " platform(s) found" << std::endl;
 
 	// 2. find all available GPU devices
 	std::vector<cl_device_id> deviceIds;
@@ -80,23 +81,23 @@ bool CAssignmentBase::InitCLContext()
 	deviceIds.resize(maxDevices);
 	int countAllDevices = 0;
 
-
 	cl_device_type deviceType = CL_DEVICE_TYPE_GPU;
 
 	for (size_t i = 0; i < platformIds.size(); i++)
 	{
 		// Getting the available devices.
 		cl_uint countDevices;
-		clGetDeviceIDs(platformIds[i], deviceType, 1, &deviceIds[countAllDevices], &countDevices);
-		countAllDevices += countDevices;
+        if (CL_SUCCESS != clGetDeviceIDs(platformIds[i], deviceType, 1, &deviceIds[countAllDevices], &countDevices))
+            std::cout << "Note: failed to get a GPU device from platform " << platformIds[i] << std::endl;
+        else
+            countAllDevices += countDevices;
 	}
-	deviceIds.resize(countAllDevices);
-
 	if (countAllDevices == 0)
 	{
-		std::cout << "No device of the selected type with OpenCL support was found.";
+        std::cerr << "No device of the selected type with OpenCL support was found.";
 		return false;
 	}
+    deviceIds.resize(countAllDevices);
 	// Choosing the first available device.
 	m_CLDevice = deviceIds[0];
 	clGetDeviceInfo(m_CLDevice, CL_DEVICE_PLATFORM, sizeof(cl_platform_id), &m_CLPlatform, NULL);
@@ -105,20 +106,18 @@ bool CAssignmentBase::InitCLContext()
 	const int maxBufferSize = 1024;
 	char buffer[maxBufferSize];
 	size_t bufferSize;
-	std::cout << "OpenCL platform:" << std::endl << std::endl;
+    std::cout << "OpenCL platform:" << std::endl;
 	PRINT_INFO("Name", buffer, bufferSize, maxBufferSize, clGetPlatformInfo(m_CLPlatform, CL_PLATFORM_NAME, maxBufferSize, (void*)buffer, &bufferSize));
 	PRINT_INFO("Vendor", buffer, bufferSize, maxBufferSize, clGetPlatformInfo(m_CLPlatform, CL_PLATFORM_VENDOR, maxBufferSize, (void*)buffer, &bufferSize));
 	PRINT_INFO("Version", buffer, bufferSize, maxBufferSize, clGetPlatformInfo(m_CLPlatform, CL_PLATFORM_VERSION, maxBufferSize, (void*)buffer, &bufferSize));
 	PRINT_INFO("Profile", buffer, bufferSize, maxBufferSize, clGetPlatformInfo(m_CLPlatform, CL_PLATFORM_PROFILE, maxBufferSize, (void*)buffer, &bufferSize));
-	std::cout << std::endl << "Device:" << std::endl << std::endl;
+    std::cout << std::endl << "Device:" << std::endl;
 	PRINT_INFO("Name", buffer, bufferSize, maxBufferSize, clGetDeviceInfo(m_CLDevice, CL_DEVICE_NAME, maxBufferSize, (void*)buffer, &bufferSize));
 	PRINT_INFO("Vendor", buffer, bufferSize, maxBufferSize, clGetDeviceInfo(m_CLDevice, CL_DEVICE_VENDOR, maxBufferSize, (void*)buffer, &bufferSize));
 	PRINT_INFO("Driver version", buffer, bufferSize, maxBufferSize, clGetDeviceInfo(m_CLDevice, CL_DRIVER_VERSION, maxBufferSize, (void*)buffer, &bufferSize));
 	cl_ulong localMemorySize;
 	clGetDeviceInfo(m_CLDevice, CL_DEVICE_LOCAL_MEM_SIZE, sizeof(cl_ulong), &localMemorySize, &bufferSize);
 	std::cout << "Local memory size: " << localMemorySize << " Byte" << std::endl;
-	std::cout << std::endl << "******************************" << std::endl << std::endl;
-
         
 	cl_int clError;
 
@@ -153,29 +152,24 @@ void CAssignmentBase::ReleaseCLContext()
 
 bool CAssignmentBase::RunComputeTask(IComputeTask& Task, size_t LocalWorkSize[3])
 {
-	if(m_CLContext == nullptr)
-	{
+    if(m_CLContext == nullptr) {
 		std::cerr<<"Error: RunComputeTask() cannot execute because the OpenCL context has not been created first."<<endl;
 	}
 	
-	if(!Task.InitResources(m_CLDevice, m_CLContext))
-	{
+    if(!Task.InitResources(m_CLDevice, m_CLContext)) {
 		std::cerr << "Error during resource allocation. Aborting execution." <<endl;
 		Task.ReleaseResources();
 		return false;
 	}
 
-	// Compute the golden result.
-	cout << "Computing CPU reference result...";
+    // Compute the golden result on CPU:
 	Task.ComputeCPU();
-	cout << "DONE" << endl;
+    cout << "" << endl;
 
 	// Running the same task on the GPU.
-	cout << "Computing GPU result...";
-
 	// Running the kernel N times. This make the measurement of the execution time more accurate.
 	Task.ComputeGPU(m_CLContext, m_CLCommandQueue, LocalWorkSize);
-	cout << "DONE" << endl;
+    cout << "" << endl;
 
 	// Validating results.
 	if (Task.ValidateResults())

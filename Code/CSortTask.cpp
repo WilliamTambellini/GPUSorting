@@ -7,6 +7,7 @@ GPU Computing / GPGPU Praktikum source code.
 
 #include "../Common/CLUtil.h"
 #include "../Common/CTimer.h"
+#include "timsort.hpp"
 
 #include <time.h>
 #include <math.h>
@@ -15,6 +16,7 @@ GPU Computing / GPGPU Praktikum source code.
 #include <sstream>
 #include <climits>
 #include <cstring>
+#include <iomanip>
 
 using namespace std;
 
@@ -81,11 +83,15 @@ bool CSortTask::InitResources(cl_device_id Device, cl_context Context)
 
 	stringstream compileOptions;
 	compileOptions << "-cl-fast-relaxed-math" << " -D MAX_LOCAL_SIZE=" << LocalWorkSize[0];
-	CLUtil::LoadProgramSourceToMemory("Sort.cl", programCode);
-	m_Program = CLUtil::BuildCLProgramFromMemory(Device, Context, programCode, compileOptions.str());
-	if (m_Program == nullptr) return false;
 
-	//create kernels for mergesort
+    if(!CLUtil::LoadProgramSourceToMemory("Sort.cl", programCode))
+        return false;
+
+    m_Program = CLUtil::BuildCLProgramFromMemory(Device, Context, programCode, compileOptions.str());
+    if(m_Program == nullptr)
+        return false;
+
+    // create kernels for mergesort
 	m_MergesortGlobalSmallKernel = clCreateKernel(m_Program, "Sort_MergesortGlobalSmall", &clError);
 	V_RETURN_FALSE_CL(clError, "Failed to create kernel: Sort_MergesortGlobalSmall.");
 	m_MergesortGlobalBigKernel = clCreateKernel(m_Program, "Sort_MergesortGlobalBig", &clError);
@@ -149,45 +155,63 @@ void CSortTask::ComputeGPU(cl_context Context, cl_command_queue CommandQueue, si
 
 	// Test Performance
 	TestPerformance(Context, CommandQueue, LocalWorkSize, 0);
-	TestPerformance(Context, CommandQueue, LocalWorkSize, 1);
+    //TestPerformance(Context, CommandQueue, LocalWorkSize, 1); // SimpleSortingNetwork
 	TestPerformance(Context, CommandQueue, LocalWorkSize, 2);
 }
+
+#define COUTW 20
+#define COUT(X) std::cout << std::left << setw(COUTW) << X;
+
+// repeat the given function F n times and measure/log the time spent
+#define BENCH(F) { CTimer timer; COUT("CPU"); COUT(m_N_padded); \
+  COUT(#F); \
+  double tt = 0; \
+  for (unsigned int j = 0; j < nIterations; j++) { \
+    copy(m_hInput, m_hInput + m_N_padded, m_resultCPU); \
+    timer.Start(); \
+    F(); \
+    timer.Stop(); \
+    tt += timer.GetElapsedMilliseconds(); \
+  } \
+  ValidateCPU(); \
+  ms = tt / double(nIterations); \
+  const auto t = 1.0e-3 * (double)m_N / ms ; \
+  COUT(ms); COUT(t); cout << endl; \
+}
+
+//cout << "  average time: " << ms << " ms,\t throughput: " << 1.0e-3 * (double)m_N / ms << " Melem/s" << endl;
 
 void CSortTask::ComputeCPU()
 {
 	unsigned int nIterations = 1;
 	double ms;
 
-	//CTimer timer;
-	//copy(m_hInput, m_hInput + m_N_padded, m_resultCPU); // if we want to compare to a std lib sorting implementation
-	//cout << endl << " std:sort " << endl;
-	//timer.Start();
-	//for (unsigned int j = 0; j < nIterations; j++) {
-	//	sort(m_resultCPU, m_resultCPU + m_N_padded);
-	//}
+    cout << endl << " inputs:\n";
+    coutCPU(m_hInput, 10);
 
-	//timer.Stop();
-
-	//ms = timer.GetElapsedMilliseconds() / double(nIterations);
-	//cout << "  average time: " << ms << " ms, throughput: " << 1.0e-3 * (double)m_N / ms << " Melem/s" << endl;
-
-	CTimer timer2;
-	cout << " own mergesort " << endl;
-	timer2.Start();
-	for (unsigned int j = 0; j < nIterations; j++) {
-		Mergesort();
-	}
-
-	timer2.Stop();
-
-	ms = timer2.GetElapsedMilliseconds() / double(nIterations);
-	cout << "  average time: " << ms << " ms, throughput: " << 1.0e-3 * (double)m_N / ms << " Melem/s" << endl;
+    COUT("HW"); COUT("N"); COUT("Algo"); COUT("Avg time (ms)"); COUT("Throughput"); cout << std::endl;
+    BENCH(StdSort);     // probably introsort nlog(n)
+    BENCH(StdStableSort);// probably a kind of mergeSort
+    BENCH(MergeSort);   // home made, needs a temp buffer meaning 2x the mem
+    BENCH(TimSort);     // hybrid stable sort, on avg nlog(n) but best case O(n)
 
 	// Check CPU implementation
-	// ValidateCPU();
+
 }
 
-void CSortTask::Mergesort()
+void CSortTask::TimSort() {
+    gfx::timsort(m_resultCPU, m_resultCPU + m_N_padded);
+}
+
+void CSortTask::StdStableSort() {
+  std::stable_sort(m_resultCPU, m_resultCPU + m_N_padded);
+}
+
+void CSortTask::StdSort() {
+  std::sort(m_resultCPU, m_resultCPU + m_N_padded);
+}
+
+void CSortTask::MergeSort()
 {
 	//temporary buffer as an helper array
 	unsigned int* tmpBuffer = new unsigned int[m_N_padded];
@@ -221,13 +245,14 @@ void CSortTask::Mergesort()
 void CSortTask::ValidateCPU()
 {
 	bool sorted = true;
-	for (int i = 1; i < m_N; i++) {
+    for (unsigned long i = 1; i < m_N; i++) {
 		if (m_resultCPU[i - 1] > m_resultCPU[i]) {
 			sorted = false;
 			break;
 		}
 	}
-	if (!sorted) cout << "CPU was not sorted correctly! INVALID ORDER!" << endl;
+    if (!sorted)
+        cerr << "CPU was not sorted correctly! INVALID ORDER!" << endl;
 }
 
 bool CSortTask::ValidateResults()
@@ -482,7 +507,7 @@ void CSortTask::ExecuteTask(cl_context Context, cl_command_queue CommandQueue, s
 
 void CSortTask::TestPerformance(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3], unsigned int Task)
 {
-	cout << "Testing performance of task " << g_kernelNames[Task] << endl;
+    //cout << "\nTesting performance of task " << g_kernelNames[Task] << endl;
 
 	//write input data to the GPU
 	V_RETURN_CL(clEnqueueWriteBuffer(CommandQueue, m_dPingArray, CL_FALSE, 0, m_N_padded * sizeof(cl_uint), m_hInput, 0, NULL, NULL), "Error copying data from host to device!");
@@ -522,7 +547,9 @@ void CSortTask::TestPerformance(cl_context Context, cl_command_queue CommandQueu
 
 	if (!skipped) {
 		double ms = timer.GetElapsedMilliseconds() / double(nIterations);
-		cout << "  average time: " << ms << " ms, throughput: " << 1.0e-3 * (double)m_N / ms << " Melem/s" << endl;
+        //cout << "  average time: " << ms << " ms, throughput: " << 1.0e-3 * (double)m_N / ms << " Melem/s" << endl;
+        auto t = 1.0e-3 * (double)m_N / ms;
+        COUT("GPU");  COUT(m_N_padded); COUT(g_kernelNames[Task]); COUT(ms); COUT(t); cout << endl;
 	}
 	else {
 		cout << "  skipped" << endl;
