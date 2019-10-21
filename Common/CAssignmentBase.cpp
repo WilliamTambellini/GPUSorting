@@ -31,29 +31,33 @@ using namespace std;
     #endif
 #endif
 
-///////////////////////////////////////////////////////////////////////////////
-// CAssignmentBase
-
 CAssignmentBase::CAssignmentBase()
-	: m_CLPlatform(nullptr), m_CLDevice(nullptr), m_CLContext(nullptr), m_CLCommandQueue(nullptr)
-{
-    std::cout << "New AssignmentBase" << std::endl;
+    : m_CLPlatform(nullptr), m_CLDevice(nullptr), m_CLContext(nullptr), m_CLCommandQueue(nullptr) {
 }
 
-CAssignmentBase::~CAssignmentBase()
-{
+CAssignmentBase::~CAssignmentBase() {
 	ReleaseCLContext();
 }
 
-bool CAssignmentBase::EnterMainLoop(int, char**)
+bool CAssignmentBase::EnterMainLoop(int argc, char** argv)
 {
 	if(!InitCLContext())
 		return false;
 
-	bool success = DoCompute();
+    unsigned n = 65536; // 262144 131072 65536 32768 16384 8192 4096
+    if (argc > 1) {
+      n = std::stol(std::string(argv[1])); // will be padded to power of 2 later
+      if (n < 512)
+        return false;
+    }
 
+    std::string t("uint");
+    if (argc > 2 && argv[2]) {
+        t = argv[2]; // f32 not yet supported
+    }
+
+    bool success = DoCompute(n, t);
 	ReleaseCLContext();
-
 	return success;
 }
 
@@ -61,11 +65,9 @@ bool CAssignmentBase::EnterMainLoop(int, char**)
 
 bool CAssignmentBase::InitCLContext()
 {
-	//////////////////////////////////////////////////////
 	//(Sect 4.3)
 
 	// 1. get all platform IDs
-
 	std::vector<cl_platform_id> platformIds;
 	const cl_uint c_MaxPlatforms = 16;
 	platformIds.resize(c_MaxPlatforms);
@@ -111,7 +113,7 @@ bool CAssignmentBase::InitCLContext()
 	PRINT_INFO("Vendor", buffer, bufferSize, maxBufferSize, clGetPlatformInfo(m_CLPlatform, CL_PLATFORM_VENDOR, maxBufferSize, (void*)buffer, &bufferSize));
 	PRINT_INFO("Version", buffer, bufferSize, maxBufferSize, clGetPlatformInfo(m_CLPlatform, CL_PLATFORM_VERSION, maxBufferSize, (void*)buffer, &bufferSize));
 	PRINT_INFO("Profile", buffer, bufferSize, maxBufferSize, clGetPlatformInfo(m_CLPlatform, CL_PLATFORM_PROFILE, maxBufferSize, (void*)buffer, &bufferSize));
-    std::cout << std::endl << "Device:" << std::endl;
+    std::cout << "Device:" << std::endl;
 	PRINT_INFO("Name", buffer, bufferSize, maxBufferSize, clGetDeviceInfo(m_CLDevice, CL_DEVICE_NAME, maxBufferSize, (void*)buffer, &bufferSize));
 	PRINT_INFO("Vendor", buffer, bufferSize, maxBufferSize, clGetDeviceInfo(m_CLDevice, CL_DEVICE_VENDOR, maxBufferSize, (void*)buffer, &bufferSize));
 	PRINT_INFO("Driver version", buffer, bufferSize, maxBufferSize, clGetDeviceInfo(m_CLDevice, CL_DRIVER_VERSION, maxBufferSize, (void*)buffer, &bufferSize));
@@ -120,23 +122,20 @@ bool CAssignmentBase::InitCLContext()
 	std::cout << "Local memory size: " << localMemorySize << " Byte" << std::endl;
         
 	cl_int clError;
-
 	m_CLContext = clCreateContext(NULL, 1, &m_CLDevice, NULL, NULL, &clError);
-		
 	V_RETURN_FALSE_CL(clError, "Failed to create OpenCL context.");
 
 	// Finally, create a command queue. All the asynchronous commands to the device will be issued
 	// from the CPU into this queue. This way the host program can continue the execution until some results
 	// from that device are needed.
-
 	m_CLCommandQueue = clCreateCommandQueue(m_CLContext, m_CLDevice, 0, &clError);
 	V_RETURN_FALSE_CL(clError, "Failed to create the command queue in the context");
 
 	return true;
 }
 
-void CAssignmentBase::ReleaseCLContext()
-{
+void CAssignmentBase::ReleaseCLContext() {
+    debug << "Release CLContext" << endl;
 	if (m_CLCommandQueue != nullptr)
 	{
 		clReleaseCommandQueue(m_CLCommandQueue);
@@ -153,7 +152,7 @@ void CAssignmentBase::ReleaseCLContext()
 bool CAssignmentBase::RunComputeTask(IComputeTask& Task, size_t LocalWorkSize[3])
 {
     if(m_CLContext == nullptr) {
-		std::cerr<<"Error: RunComputeTask() cannot execute because the OpenCL context has not been created first."<<endl;
+        std::cerr << "Error: RunComputeTask() cannot execute because the OpenCL context has not been created first." << endl;
 	}
 	
     if(!Task.InitResources(m_CLDevice, m_CLContext)) {

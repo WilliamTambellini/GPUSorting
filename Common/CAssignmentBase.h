@@ -46,7 +46,7 @@ public:
 	virtual bool EnterMainLoop(int argc, char** argv);
 
 	//! You need to overload this to define a specific behavior for your assignments
-	virtual bool DoCompute() = 0;
+    virtual bool DoCompute(const unsigned n, const std::string type) = 0;
 
 protected:	
 	virtual bool InitCLContext();

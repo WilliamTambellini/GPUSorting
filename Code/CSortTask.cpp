@@ -1,22 +1,20 @@
-/******************************************************************************
-GPU Computing / GPGPU Praktikum source code.
-
-******************************************************************************/
-
 #include "CSortTask.h"
 
 #include "../Common/CLUtil.h"
 #include "../Common/CTimer.h"
 #include "timsort.hpp"
 
+#include <assert.h>
 #include <time.h>
 #include <math.h>
 #include <stdlib.h>
 #include <algorithm>
+#include <random>
 #include <sstream>
 #include <climits>
 #include <cstring>
 #include <iomanip>
+#include <regex>
 
 using namespace std;
 
@@ -24,68 +22,103 @@ using namespace std;
 #define SSN_LIMIT 1024 * 512
 #define MERGE_LIMIT 1024 * 1024 * 2
 
-///////////////////////////////////////////////////////////////////////////////
-// CSortTask
-
 string g_kernelNames[4] = {
 	"Mergesort",
 	"SimpleSortingNetwork",
 	"BitonicMergesort",
 };
 
-CSortTask::CSortTask(size_t ArraySize, size_t LocWorkSize[3])
-	: m_N(ArraySize), LocalWorkSize(),
-	m_hInput(NULL),
-	m_dPingArray(NULL),
-	m_dPongArray(NULL),
-	m_Program(NULL),
-	m_MergesortStartKernel(NULL), m_MergesortGlobalSmallKernel(NULL), m_MergesortGlobalBigKernel(NULL),
-	m_SimpleSortingNetworkKernel(NULL), m_SimpleSortingNetworkLocalKernel(NULL),
-	m_BitonicGlobalKernel(NULL), m_BitonicLocalKernel(NULL), m_BitonicStartKernel(NULL)
-{
-	m_N_padded = getPaddedSize(m_N);
-	LocalWorkSize[0] = LocWorkSize[0];
-	LocalWorkSize[1] = LocWorkSize[1];
-	LocalWorkSize[2] = LocWorkSize[2];
-}
-
-CSortTask::~CSortTask()
-{
+template <typename T>
+CSortTask<T>::~CSortTask() {
 	ReleaseResources();
 }
 
-bool CSortTask::InitResources(cl_device_id Device, cl_context Context)
-{
+template <typename T>
+void randomize(T* v, const unsigned n) {
+
+}
+
+template<>
+void randomize<unsigned int>(unsigned int* v, const unsigned n) {
+    std::uniform_int_distribution<unsigned int> distribution(0, std::numeric_limits<unsigned>::max());
+    std::mt19937 engine;
+    auto generator = std::bind(distribution, engine);
+    std::generate_n(v, n, generator);
+}
+
+template<>
+void randomize<float>(float* v, const unsigned n) {
+    cout << "min float=" << std::numeric_limits<float>::min() << endl;
+    cout << "max float=" << std::numeric_limits<float>::max() << endl;
+    cout << "lowest float=" << std::numeric_limits<float>::lowest() << endl;
+
+    std::uniform_real_distribution<float> distribution(std::numeric_limits<float>::lowest()/2, std::numeric_limits<float>::max()/2);
+    cout << "dist min=" << distribution.min() << endl;
+    cout << "dist max=" << distribution.max() << endl;
+    //std::random_device rd; // better ?
+    std::mt19937 engine; // or engine(rd());
+    auto generator = std::bind(distribution, engine);
+    std::generate_n(v, n, generator);
+}
+
+std::regex regTYPE("\\b(TYPE)");
+
+template <typename T>
+std::string replaceTYPE(std::string& i) {
+    cerr << "replaceTYPE not specialized for that type T" << endl;
+    exit(1);
+    return std::string();
+}
+template <>
+std::string replaceTYPE<float>(std::string& i) {
+    return std::regex_replace(std::string(i), regTYPE, "float");
+}
+template <>
+std::string replaceTYPE<uint>(std::string& i) {
+    return std::regex_replace(std::string(i), regTYPE, "uint");
+}
+
+template <typename T>
+bool CSortTask<T>::InitResources(cl_device_id Device, cl_context Context) {
 	//CPU resources
-	m_hInput = new unsigned int[m_N_padded];
-	m_resultCPU = new unsigned int[m_N_padded];
+    m_hInput = new T[m_N_padded];
+    m_resultCPU = new T[m_N_padded];
+    cout << toString(m_hInput, 20);
 
 	srand((unsigned int)time(NULL)); // To get each "time" another seed for rand()
-	//fill the array with some values
-	for (unsigned int i = 0; i < m_N; i++)
-		//m_hInput[i] = m_N - i;			// Use this for debugging. Use 1 or i or similar
-		m_hInput[i] = rand();
+
+    // fill the array with some values using old school rand or use uniform distrib
+    //for (unsigned int i = 0; i < m_N; i++)
+        // m_hInput[i] = m_N - i; // Use this for debugging. Use 1 or i or similar
+        // m_hInput[i] = rand(); // int between 0 and RAND_MAX
+
+    randomize(m_hInput, m_N);
+    cout << toString(m_hInput, 20);
 
 	//pad the array with max value so we can sort arbitrarily long arrays, not only power of 2
 	for (size_t i = m_N; i < m_N_padded; i++)
-		m_hInput[i] = UINT_MAX;
+        m_hInput[i] = std::numeric_limits<T>::max(); // eq UINT_MAXm ...
 
 	//device resources
+    const size_t s = sizeof(T); // sizeof(cl_uint)
 	cl_int clError, clError2;
-	m_dPingArray = clCreateBuffer(Context, CL_MEM_READ_WRITE, sizeof(cl_uint) * m_N_padded, NULL, &clError2);
+    m_dPingArray = clCreateBuffer(Context, CL_MEM_READ_WRITE, s * m_N_padded, NULL, &clError2);
 	clError = clError2;
-	m_dPongArray = clCreateBuffer(Context, CL_MEM_READ_WRITE, sizeof(cl_uint) * m_N_padded, NULL, &clError2);
+    m_dPongArray = clCreateBuffer(Context, CL_MEM_READ_WRITE, s * m_N_padded, NULL, &clError2);
 	clError |= clError2;
 	V_RETURN_FALSE_CL(clError, "Error allocating device arrays");
 
 	//load and compile kernels with compileoptions
 	string programCode;
-
 	stringstream compileOptions;
 	compileOptions << "-cl-fast-relaxed-math" << " -D MAX_LOCAL_SIZE=" << LocalWorkSize[0];
 
     if(!CLUtil::LoadProgramSourceToMemory("Sort.cl", programCode))
         return false;
+
+    // Replace TYPE with the desired type
+    debug << "Replacing TYPE with the desired type..." << endl; // dont trust typeid(T).name()
+    programCode = replaceTYPE<T>(programCode);
 
     m_Program = CLUtil::BuildCLProgramFromMemory(Device, Context, programCode, compileOptions.str());
     if(m_Program == nullptr)
@@ -116,8 +149,8 @@ bool CSortTask::InitResources(cl_device_id Device, cl_context Context)
 	return true;
 }
 
-void CSortTask::ReleaseResources()
-{
+template <typename T>
+void CSortTask<T>::ReleaseResources() {
 	// host resources
 	SAFE_DELETE_ARRAY(m_hInput);
 	SAFE_DELETE_ARRAY(m_resultCPU);
@@ -140,14 +173,9 @@ void CSortTask::ReleaseResources()
 	SAFE_RELEASE_PROGRAM(m_Program);
 }
 
-size_t CSortTask::getPaddedSize(size_t n)
-{
-	unsigned int log2val = (unsigned int)ceil(log((float)n) / log(2.f));
-	return (size_t)pow(2, log2val);
-}
-
-void CSortTask::ComputeGPU(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3])
-{
+template <typename T>
+void CSortTask<T>::ComputeGPU(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3]) {
+    debug << "ComputeGPU " << endl;
 	// Execute Tasks
 	ExecuteTask(Context, CommandQueue, LocalWorkSize, 0);
 	ExecuteTask(Context, CommandQueue, LocalWorkSize, 1);
@@ -155,7 +183,7 @@ void CSortTask::ComputeGPU(cl_context Context, cl_command_queue CommandQueue, si
 
 	// Test Performance
 	TestPerformance(Context, CommandQueue, LocalWorkSize, 0);
-    //TestPerformance(Context, CommandQueue, LocalWorkSize, 1); // SimpleSortingNetwork
+    //TestPerformance(Context, CommandQueue, LocalWorkSize, 1); // SimpleSortingNetwork pretty slow
 	TestPerformance(Context, CommandQueue, LocalWorkSize, 2);
 }
 
@@ -163,8 +191,7 @@ void CSortTask::ComputeGPU(cl_context Context, cl_command_queue CommandQueue, si
 #define COUT(X) std::cout << std::left << setw(COUTW) << X;
 
 // repeat the given function F n times and measure/log the time spent
-#define BENCH(F) { CTimer timer; COUT("CPU"); COUT(m_N_padded); \
-  COUT(#F); \
+#define BENCH(F) { CTimer timer; COUT("CPU"); COUT(m_N_padded); COUT(#F); \
   double tt = 0; \
   for (unsigned int j = 0; j < nIterations; j++) { \
     copy(m_hInput, m_hInput + m_N_padded, m_resultCPU); \
@@ -173,7 +200,7 @@ void CSortTask::ComputeGPU(cl_context Context, cl_command_queue CommandQueue, si
     timer.Stop(); \
     tt += timer.GetElapsedMilliseconds(); \
   } \
-  ValidateCPU(); \
+  ValidateSorted(m_resultCPU); \
   ms = tt / double(nIterations); \
   const auto t = 1.0e-3 * (double)m_N / ms ; \
   COUT(ms); COUT(t); cout << endl; \
@@ -181,41 +208,43 @@ void CSortTask::ComputeGPU(cl_context Context, cl_command_queue CommandQueue, si
 
 //cout << "  average time: " << ms << " ms,\t throughput: " << 1.0e-3 * (double)m_N / ms << " Melem/s" << endl;
 
-void CSortTask::ComputeCPU()
-{
+template <typename T>
+void CSortTask<T>::ComputeCPU() {
 	unsigned int nIterations = 1;
 	double ms;
 
     cout << endl << " inputs:\n";
-    coutCPU(m_hInput, 10);
+    cout << toString(m_hInput, 30);
+    cout << endl;
 
-    COUT("HW"); COUT("N"); COUT("Algo"); COUT("Avg time (ms)"); COUT("Throughput"); cout << std::endl;
-    BENCH(StdSort);     // probably introsort nlog(n)
-    BENCH(StdStableSort);// probably a kind of mergeSort
-    BENCH(MergeSort);   // home made, needs a temp buffer meaning 2x the mem
-    BENCH(TimSort);     // hybrid stable sort, on avg nlog(n) but best case O(n)
-
-	// Check CPU implementation
-
+    COUT("HW"); COUT("N"); COUT("Algo"); COUT("Avg time (ms)"); COUT("Throughput (Melem/s)");
+    cout << std::endl;
+    BENCH(StdSort);         // probably introsort nlog(n)
+    BENCH(StdStableSort);   // probably a kind of mergeSort
+    BENCH(MergeSort);       // home made, needs a temp buffer meaning 2x the mem
+    BENCH(TimSort);         // hybrid stable sort, on avg nlog(n) but best case O(n)
 }
 
-void CSortTask::TimSort() {
+template <typename T>
+void CSortTask<T>::TimSort() {
     gfx::timsort(m_resultCPU, m_resultCPU + m_N_padded);
 }
 
-void CSortTask::StdStableSort() {
+template <typename T>
+void CSortTask<T>::StdStableSort() {
   std::stable_sort(m_resultCPU, m_resultCPU + m_N_padded);
 }
 
-void CSortTask::StdSort() {
+template <typename T>
+void CSortTask<T>::StdSort() {
   std::sort(m_resultCPU, m_resultCPU + m_N_padded);
 }
 
-void CSortTask::MergeSort()
-{
+template <typename T>
+void CSortTask<T>::MergeSort() {
 	//temporary buffer as an helper array
-	unsigned int* tmpBuffer = new unsigned int[m_N_padded];
-	memcpy(tmpBuffer, m_hInput, m_N_padded * sizeof(unsigned int));
+    T* tmpBuffer = new T[m_N_padded];
+    memcpy(tmpBuffer, m_hInput, m_N_padded * sizeof(T));
 	for (unsigned int stride = 2; stride <= m_N_padded; stride *= 2) {
 		for (unsigned int i = 0; i < m_N_padded; i += stride) {
 			unsigned int middle = i + (stride / 2);
@@ -233,7 +262,7 @@ void CSortTask::MergeSort()
 				}
 			}
 		}
-		swap(m_resultCPU, tmpBuffer);
+        std::swap(m_resultCPU, tmpBuffer);
 	}
 	// final swap to have the result in the correct array
 	swap(m_resultCPU, tmpBuffer);
@@ -242,34 +271,45 @@ void CSortTask::MergeSort()
 	SAFE_DELETE_ARRAY(tmpBuffer);
 }
 
-void CSortTask::ValidateCPU()
-{
+template <typename T>
+bool CSortTask<T>::ValidateSorted(const T* v) {
 	bool sorted = true;
     for (unsigned long i = 1; i < m_N; i++) {
-		if (m_resultCPU[i - 1] > m_resultCPU[i]) {
+        if (v[i - 1] > v[i]) {
 			sorted = false;
 			break;
 		}
 	}
-    if (!sorted)
-        cerr << "CPU was not sorted correctly! INVALID ORDER!" << endl;
+    if (!sorted) {
+        cerr << "Array was not sorted correctly! INVALID ORDER!" << endl;
+        return false;
+    }
+    return true;
 }
 
-bool CSortTask::ValidateResults()
-{
+template <typename T>
+bool CSortTask<T>::ValidateResults() {
 	bool success = true;
 
 	for (int i = 0; i < 3; i++)
-		if (memcmp(m_resultGPU[i], m_resultCPU, m_N) != 0)
-		{
-			cout << "Validation of sorting kernel " << g_kernelNames[i] << " failed." << endl;
+        // for float types, memcmp could fail just because of approximations:
+        //if (memcmp(m_resultGPU[i], m_resultCPU, m_N) != 0)
+        for (unsigned j = 0; j < m_N; ++j) {
+            if (ValidateSorted(m_resultGPU[i]))
+                continue;
+            cerr << "Validation of sorting kernel " << g_kernelNames[i] << " failed." << endl;
+            cerr << "GPU: ";
+            cerr << toString(m_resultGPU[i], 10) << endl;
+            cerr << "CPU: " << toString(m_resultCPU, 10) << endl;
 			success = false;
+            return false;
 		}
 
 	return success;
 }
 
-void CSortTask::Sort_Mergesort(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3])
+template <typename T>
+void CSortTask<T>::Sort_Mergesort(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3])
 {
 	//TODO fix memory problem when many elements. -> CL_OUT_OF_RESOURCES
 	cl_int clError;
@@ -278,6 +318,8 @@ void CSortTask::Sort_Mergesort(cl_context Context, cl_command_queue CommandQueue
 
 	localWorkSize[0] = LocalWorkSize[0];
 	globalWorkSize[0] = CLUtil::GetGlobalWorkSize(m_N_padded / 2, localWorkSize[0]);
+    debug << "Sort_Mergesort: localWorkSize=" << localWorkSize[0] << " globalWorkSize=" << globalWorkSize[0] << endl;
+
 	unsigned int locLimit = 1;
 
 	if (m_N_padded >= LocalWorkSize[0] * 2) {
@@ -300,9 +342,13 @@ void CSortTask::Sort_Mergesort(cl_context Context, cl_command_queue CommandQueue
 	localWorkSize[0] = LocalWorkSize[0];
 	globalWorkSize[0] = CLUtil::GetGlobalWorkSize(m_N_padded / 2, localWorkSize[0]);
 
+    assert(sizeof(T) == sizeof(cl_uint));
+
+    const auto s = sizeof(T);
 	if (m_N_padded <= MERGESORT_SMALL_STRIDE) {
 		// set not changing arguments
-		clError = clSetKernelArg(m_MergesortGlobalSmallKernel, 3, sizeof(cl_uint), (void*)&m_N_padded);
+        debug << "paddedN <= MERGESORT_SMALL_STRIDE (" << MERGESORT_SMALL_STRIDE << ")" << endl;
+        clError = clSetKernelArg(m_MergesortGlobalSmallKernel, 3, s, (void*)&m_N_padded);
 		V_RETURN_CL(clError, "Failed to set kernel args: MergeSortGlobal");
 
 		for (; stride <= m_N_padded; stride <<= 1) {
@@ -314,7 +360,7 @@ void CSortTask::Sort_Mergesort(cl_context Context, cl_command_queue CommandQueue
 
 			clError = clSetKernelArg(m_MergesortGlobalSmallKernel, 0, sizeof(cl_mem), (void*)&m_dPingArray);
 			clError |= clSetKernelArg(m_MergesortGlobalSmallKernel, 1, sizeof(cl_mem), (void*)&m_dPongArray);
-			clError |= clSetKernelArg(m_MergesortGlobalSmallKernel, 2, sizeof(cl_uint), (void*)&stride);
+            clError |= clSetKernelArg(m_MergesortGlobalSmallKernel, 2, s, (void*)&stride);
 			V_RETURN_CL(clError, "Failed to set kernel args: MergeSortGlobal");
 
 			clError = clEnqueueNDRangeKernel(CommandQueue, m_MergesortGlobalSmallKernel, 1, NULL, globalWorkSize, localWorkSize, 0, NULL, NULL);
@@ -324,6 +370,7 @@ void CSortTask::Sort_Mergesort(cl_context Context, cl_command_queue CommandQueue
 		}
 	}
 	else {
+
 		// set not changing arguments
 		clError = clSetKernelArg(m_MergesortGlobalBigKernel, 3, sizeof(cl_uint), (void*)&m_N_padded);
 		V_RETURN_CL(clError, "Failed to set kernel args: MergeSortGlobal");
@@ -337,19 +384,21 @@ void CSortTask::Sort_Mergesort(cl_context Context, cl_command_queue CommandQueue
 
 			clError = clSetKernelArg(m_MergesortGlobalBigKernel, 0, sizeof(cl_mem), (void*)&m_dPingArray);
 			clError |= clSetKernelArg(m_MergesortGlobalBigKernel, 1, sizeof(cl_mem), (void*)&m_dPongArray);
-			clError |= clSetKernelArg(m_MergesortGlobalBigKernel, 2, sizeof(cl_uint), (void*)&stride);
+            clError |= clSetKernelArg(m_MergesortGlobalBigKernel, 2, s, (void*)&stride);
 			V_RETURN_CL(clError, "Failed to set kernel args: MergeSortGlobal");
 
 			clError = clEnqueueNDRangeKernel(CommandQueue, m_MergesortGlobalBigKernel, 1, NULL, globalWorkSize, localWorkSize, 0, NULL, NULL);
 			V_RETURN_CL(clError, "Error executing kernel!");
 
-			if (stride >= 1024 * 1024) V_RETURN_CL(clFinish(CommandQueue), "Failed finish CommandQueue at mergesort for bigger strides.");
+            if (stride >= 1024 * 1024)
+                V_RETURN_CL(clFinish(CommandQueue), "Failed finish CommandQueue at mergesort for bigger strides.");
 			swap(m_dPingArray, m_dPongArray);
 		}
 	}
 }
 
-void CSortTask::Sort_SimpleSortingNetwork(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3])
+template <typename T>
+void CSortTask<T>::Sort_SimpleSortingNetwork(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3])
 {
 	cl_int clError;
 	size_t globalWorkSize[1];
@@ -380,7 +429,8 @@ void CSortTask::Sort_SimpleSortingNetwork(cl_context Context, cl_command_queue C
 	}
 }
 
-void CSortTask::Sort_SimpleSortingNetworkLocal(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3])
+template <typename T>
+void CSortTask<T>::Sort_SimpleSortingNetworkLocal(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3])
 {
 	cl_int clError;
 	size_t globalWorkSize[1];
@@ -406,8 +456,8 @@ void CSortTask::Sort_SimpleSortingNetworkLocal(cl_context Context, cl_command_qu
 	}
 }
 
-void CSortTask::Sort_BitonicMergesort(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3])
-{
+template <typename T>
+void CSortTask<T>::Sort_BitonicMergesort(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3]) {
 	cl_int clError;
 	size_t globalWorkSize[1];
 	size_t localWorkSize[1];
@@ -454,10 +504,17 @@ void CSortTask::Sort_BitonicMergesort(cl_context Context, cl_command_queue Comma
 	swap(m_dPingArray, m_dPongArray);
 }
 
-void CSortTask::ExecuteTask(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3], unsigned int Task)
-{
-	//write input data to the GPU
-	V_RETURN_CL(clEnqueueWriteBuffer(CommandQueue, m_dPingArray, CL_FALSE, 0, m_N_padded * sizeof(cl_uint), m_hInput, 0, NULL, NULL), "Error copying data from host to device!");
+template <typename T>
+void CSortTask<T>::ExecuteTask(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3], unsigned int Task) {
+    debug << "ExecuteTask paddedN=" << m_N_padded << endl;
+    //write input data to the GPU
+    //const unsigned long s = sizeof(cl_uint);
+    if (sizeof(cl_uint) != sizeof(T) || sizeof(cl_float) != sizeof(float)) {
+        std::cerr << "Size of T differ from sizeof cl type" << endl;
+        return;
+    }
+    const unsigned long s = sizeof(T); // = sizeof(cl_uint) if unsigned int
+    V_RETURN_CL(clEnqueueWriteBuffer(CommandQueue, m_dPingArray, CL_FALSE, 0, m_N_padded * s, m_hInput, 0, NULL, NULL), "Error copying data from host to device!");
 
 	bool skipped = false;
 	//run selected task
@@ -484,10 +541,14 @@ void CSortTask::ExecuteTask(cl_context Context, cl_command_queue CommandQueue, s
 		break;
 	}
 
-	//read back the results synchronously.
-	m_resultGPU[Task] = new unsigned int[m_N];
-	if (skipped) memcpy(m_resultGPU[Task], m_resultCPU, m_N);
-	else V_RETURN_CL(clEnqueueReadBuffer(CommandQueue, m_dPingArray, CL_TRUE, 0, m_N * sizeof(cl_uint), m_resultGPU[Task], 0, NULL, NULL), "Error reading data from device!");
+    debug << "Reading back the results synchronously..." << endl;
+
+    debug << "Allocating " << m_N << " for receiving data from gpu..." << endl;
+    m_resultGPU[Task] = new T[m_N];
+    if (skipped)
+        memcpy(m_resultGPU[Task], m_resultCPU, m_N);
+    else
+        V_RETURN_CL(clEnqueueReadBuffer(CommandQueue, m_dPingArray, CL_TRUE, 0, m_N * s, m_resultGPU[Task], 0, NULL, NULL), "Error reading data from device!");
 
 	//DEBUG TODO: change Task number or delete
 	if (Task == 012) {
@@ -505,9 +566,9 @@ void CSortTask::ExecuteTask(cl_context Context, cl_command_queue CommandQueue, s
 	}
 }
 
-void CSortTask::TestPerformance(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3], unsigned int Task)
-{
-    //cout << "\nTesting performance of task " << g_kernelNames[Task] << endl;
+template <typename T>
+void CSortTask<T>::TestPerformance(cl_context Context, cl_command_queue CommandQueue, size_t LocalWorkSize[3], unsigned int Task) {
+    debug << "Testing performance of task " << g_kernelNames[Task] << endl;
 
 	//write input data to the GPU
 	V_RETURN_CL(clEnqueueWriteBuffer(CommandQueue, m_dPingArray, CL_FALSE, 0, m_N_padded * sizeof(cl_uint), m_hInput, 0, NULL, NULL), "Error copying data from host to device!");
@@ -546,9 +607,8 @@ void CSortTask::TestPerformance(cl_context Context, cl_command_queue CommandQueu
 	timer.Stop();
 
 	if (!skipped) {
-		double ms = timer.GetElapsedMilliseconds() / double(nIterations);
-        //cout << "  average time: " << ms << " ms, throughput: " << 1.0e-3 * (double)m_N / ms << " Melem/s" << endl;
-        auto t = 1.0e-3 * (double)m_N / ms;
+        const double ms = timer.GetElapsedMilliseconds() / double(nIterations);
+        const auto t = 1.0e-3 * (double)m_N / ms;
         COUT("GPU");  COUT(m_N_padded); COUT(g_kernelNames[Task]); COUT(ms); COUT(t); cout << endl;
 	}
 	else {
@@ -556,4 +616,8 @@ void CSortTask::TestPerformance(cl_context Context, cl_command_queue CommandQueu
 	}
 }
 
-///////////////////////////////////////////////////////////////////////////////
+// dummy imp for successfull linking
+size_t dummySize[3]{0,0,0};
+CSortTask<unsigned int> uintSortTask(0, dummySize);
+CSortTask<float> fSortTask(0, dummySize);
+CSortTask<cl_half> hSortTask(0, dummySize);
